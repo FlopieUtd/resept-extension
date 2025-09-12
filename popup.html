@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        width: 200px;
+        padding: 20px;
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+
+      button {
+        width: 100%;
+        padding: 12px;
+        background-color: #e7000b;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background-color: #c10007;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="debug"
+      style="
+        padding: 10px;
+        background: #f0f0f0;
+        margin: 10px;
+        border: 1px solid #ccc;
+      "
+    >
+      <p>Extension loaded!</p>
+      <p id="status">Loading...</p>
+    </div>
+
+    <div id="authSection" style="display: none">
+      <button id="loginBtn">Login to Resept</button>
+    </div>
+
+    <div id="recipeSection" style="display: none">
+      <button id="addRecipeBtn">Add this recipe to Resept</button>
+      <button
+        id="viewRecipeBtn"
+        style="margin-top: 10px; background-color: #4caf50; display: none"
+      >
+        View Recipe in Webapp
+      </button>
+      <button
+        id="logoutBtn"
+        style="margin-top: 10px; background-color: #f44336"
+      >
+        Logout
+      </button>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
