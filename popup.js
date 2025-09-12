@@ -624,8 +624,13 @@ const handleViewRecipe = async () => {
     console.log("🌐 [VIEW] Opening recipe in webapp:", lastCreatedRecipeId);
 
     // Construct the webapp URL
-    // Use local development URL for now - can be changed to production URL later
-    const webappUrl = `http://localhost:5173/recipes/${lastCreatedRecipeId}`;
+    // Switch between dev and production based on environment
+    // Check if we're in development by looking for localhost in the current tab
+    const [currentTab] = await browser.tabs.query({ active: true, currentWindow: true });
+    const isDev = currentTab?.url?.includes('localhost') || currentTab?.url?.includes('127.0.0.1');
+    const webappUrl = isDev 
+      ? `http://localhost:5173/recipes/${lastCreatedRecipeId}`
+      : `https://flopieutd.github.io/resept/recipes/${lastCreatedRecipeId}`;
 
     // Open the recipe in a new tab
     await browser.tabs.create({
