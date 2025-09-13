@@ -1,237 +1,234 @@
+// Configuration
+const CONFIG = {
+  backendUrl: "http://localhost:8787",
+  authTimeout: 30,
+  checkInterval: 2000,
+  tokenBuffer: 5 * 60 * 1000, // 5 minutes
+  buttonResetDelay: 2000,
+  viewButtonHideDelay: 10000,
+  buttonColors: {
+    success: "#45a049",
+    error: "#f44336",
+    default: "#4caf50",
+  },
+};
+
 // DOM elements
-const authSection = document.getElementById("authSection");
-const recipeSection = document.getElementById("recipeSection");
-const loginBtn = document.getElementById("loginBtn");
-const addRecipeBtn = document.getElementById("addRecipeBtn");
-const viewRecipeBtn = document.getElementById("viewRecipeBtn");
-const logoutBtn = document.getElementById("logoutBtn");
+const elements = {
+  authSection: document.getElementById("authSection"),
+  recipeSection: document.getElementById("recipeSection"),
+  loginBtn: document.getElementById("loginBtn"),
+  addRecipeBtn: document.getElementById("addRecipeBtn"),
+  viewRecipeBtn: document.getElementById("viewRecipeBtn"),
+  logoutBtn: document.getElementById("logoutBtn"),
+  status: document.getElementById("status"),
+};
 
-// Auth state
-let jwtToken = null;
-let refreshToken = null;
-let tokenExpiresAt = null;
+// State
+let state = {
+  jwtToken: null,
+  refreshToken: null,
+  tokenExpiresAt: null,
+  lastCreatedRecipeId: null,
+};
 
-// Recipe state
-let lastCreatedRecipeId = null;
+// Helper functions
+const updateStatus = (message) => {
+  if (elements.status) elements.status.textContent = message;
+};
+
+const showSection = (section) => {
+  const isAuth = section === "auth";
+  elements.authSection.style.display = isAuth ? "block" : "none";
+  elements.recipeSection.style.display = isAuth ? "none" : "block";
+};
+
+const updateButton = (button, text, color, disabled = false) => {
+  if (button) {
+    button.textContent = text;
+    button.style.backgroundColor = color;
+    button.disabled = disabled;
+  }
+};
+
+const resetButton = (button, text = "Add this recipe to Resept") => {
+  updateButton(button, text, CONFIG.buttonColors.default, false);
+};
+
+const showViewButton = (show = true) => {
+  if (elements.viewRecipeBtn) {
+    elements.viewRecipeBtn.style.display = show ? "block" : "none";
+  }
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const handleButtonState = async (button, states) => {
+  const { loading, success, error } = states;
+
+  if (loading) {
+    updateButton(button, loading.text, loading.color, true);
+    showViewButton(false);
+  }
+
+  if (success) {
+    updateButton(button, success.text, success.color);
+    if (success.showViewButton) showViewButton(true);
+    setTimeout(() => {
+      resetButton(button);
+      showViewButton(false);
+    }, CONFIG.buttonResetDelay);
+  }
+
+  if (error) {
+    updateButton(button, error.text, error.color);
+    setTimeout(() => resetButton(button), CONFIG.buttonResetDelay);
+  }
+};
 
 // Initialize the popup
 const init = async () => {
   try {
-    updateDebugStatus("Initializing...");
+    updateStatus("Initializing...");
+    await sleep(100);
 
-    // Small delay to ensure any recent token storage has completed
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Ask background script to check and refresh tokens proactively
     try {
       await browser.runtime.sendMessage({ action: "checkTokenStatus" });
     } catch (error) {}
 
     await checkAuthState();
-
     setupEventListeners();
-
-    updateDebugStatus("Ready!");
+    updateStatus("Ready!");
   } catch (error) {
-    updateDebugStatus("Error: " + error.message);
-  }
-};
-
-// Update debug status
-const updateDebugStatus = (message) => {
-  const statusEl = document.getElementById("status");
-  if (statusEl) {
-    statusEl.textContent = message;
+    updateStatus("Error: " + error.message);
   }
 };
 
 // Check if user is authenticated
 const checkAuthState = async () => {
   try {
-    updateDebugStatus("Checking auth state...");
+    updateStatus("Checking auth state...");
 
-    // Check extension storage
     const result = await browser.storage.local.get([
       "jwtToken",
       "refreshToken",
       "tokenExpiresAt",
     ]);
 
-    jwtToken = result.jwtToken;
-    refreshToken = result.refreshToken;
-    tokenExpiresAt = result.tokenExpiresAt;
+    Object.assign(state, result);
 
-    if (jwtToken) {
-      // Check if token needs refresh
+    if (state.jwtToken) {
       if (isTokenExpired()) {
-        updateDebugStatus("Token expired, refreshing...");
+        updateStatus("Token expired, refreshing...");
         const refreshed = await refreshAccessToken();
         if (!refreshed) {
-          updateDebugStatus("Token refresh failed, please login again");
+          updateStatus("Token refresh failed, please login again");
           await handleLogout();
           return;
         }
-      } else {
       }
-      updateDebugStatus("✅ Authenticated! Showing recipe section");
-      showRecipeSection();
+      updateStatus("✅ Authenticated! Showing recipe section");
+      showSection("recipe");
     } else {
-      updateDebugStatus("❌ Not authenticated - showing login");
-      showAuthSection();
+      updateStatus("❌ Not authenticated - showing login");
+      showSection("auth");
     }
   } catch (error) {
-    updateDebugStatus("Error: " + error.message);
-    showAuthSection();
-  }
-};
-
-// Show login section
-const showAuthSection = () => {
-  if (authSection) {
-    authSection.style.display = "block";
-  }
-  if (recipeSection) {
-    recipeSection.style.display = "none";
-  }
-};
-
-// Show recipe section
-const showRecipeSection = () => {
-  if (authSection) {
-    authSection.style.display = "none";
-  }
-  if (recipeSection) {
-    recipeSection.style.display = "block";
+    updateStatus("Error: " + error.message);
+    showSection("auth");
   }
 };
 
 // Setup event listeners
 const setupEventListeners = () => {
-  if (loginBtn) {
-    loginBtn.addEventListener("click", handleLogin);
-  }
-  if (addRecipeBtn) {
-    addRecipeBtn.addEventListener("click", handleAddRecipe);
-  }
-  if (viewRecipeBtn) {
-    viewRecipeBtn.addEventListener("click", handleViewRecipe);
-  }
-  if (logoutBtn) {
-    logoutBtn.addEventListener("click", handleLogout);
-  }
+  const listeners = [
+    [elements.loginBtn, handleLogin],
+    [elements.addRecipeBtn, handleAddRecipe],
+    [elements.viewRecipeBtn, handleViewRecipe],
+    [elements.logoutBtn, handleLogout],
+  ];
+
+  listeners.forEach(([element, handler]) => {
+    if (element) element.addEventListener("click", handler);
+  });
 };
 
 // Handle login
 const handleLogin = async () => {
-  updateDebugStatus("Opening auth page...");
+  updateStatus("Opening auth page...");
 
   try {
-    const redirectUri =
-      "moz-extension://" + browser.runtime.id + "/auth-success.html";
-    const backendUrl = "http://localhost:8787";
-    const authUrl = `${backendUrl}/auth/extension?redirect_uri=${encodeURIComponent(
-      redirectUri
-    )}`;
+    const redirectUri = `moz-extension://${browser.runtime.id}/auth-success.html`;
+    const authUrl = `${
+      CONFIG.backendUrl
+    }/auth/extension?redirect_uri=${encodeURIComponent(redirectUri)}`;
 
-    // Create a new tab with the auth URL
-    const tab = await browser.tabs.create({
-      url: authUrl,
-      active: true,
-    });
+    const tab = await browser.tabs.create({ url: authUrl, active: true });
 
-    // Monitor for authentication completion
-    updateDebugStatus("Monitoring auth tab...");
+    updateStatus("Monitoring auth tab...");
     setTimeout(() => {
       let attempts = 0;
-      const maxAttempts = 30; // 60 seconds timeout
       const checkInterval = setInterval(async () => {
         attempts++;
 
         try {
-          // Check if tokens were stored by the frontend
           const tabResult = await browser.tabs.executeScript(tab.id, {
-            code: `
-              ({
-                jwtToken: localStorage.getItem('jwtToken') || localStorage.getItem('extension_token'),
-                refreshToken: localStorage.getItem('extension_refresh_token'),
-                expiresAt: localStorage.getItem('extension_expires_at'),
-                allLocalStorage: Object.keys(localStorage).reduce((acc, key) => {
-                  if (key.includes('token') || key.includes('extension') || key.includes('jwt')) {
-                    acc[key] = localStorage.getItem(key);
-                  }
-                  return acc;
-                }, {}),
-                currentUrl: window.location.href
-              })
-            `,
+            code: `({
+              jwtToken: localStorage.getItem('jwtToken') || localStorage.getItem('extension_token'),
+              refreshToken: localStorage.getItem('extension_refresh_token'),
+              expiresAt: localStorage.getItem('extension_expires_at')
+            })`,
           });
 
-          if (tabResult && tabResult[0] && tabResult[0].jwtToken) {
+          if (tabResult?.[0]?.jwtToken) {
             const tokenData = tabResult[0];
-
-            // Store tokens in extension storage
             await browser.storage.local.set({
               jwtToken: tokenData.jwtToken,
               refreshToken: tokenData.refreshToken,
               tokenExpiresAt: tokenData.expiresAt,
             });
 
-            updateDebugStatus("Authentication successful!");
+            updateStatus("Authentication successful!");
             await checkAuthState();
             clearInterval(checkInterval);
             try {
               await browser.tabs.remove(tab.id);
             } catch (e) {}
             return;
-          } else {
           }
         } catch (e) {}
 
-        if (attempts >= maxAttempts) {
+        if (attempts >= CONFIG.authTimeout) {
           clearInterval(checkInterval);
-          updateDebugStatus("OAuth timeout - please try again");
+          updateStatus("OAuth timeout - please try again");
           try {
             await browser.tabs.remove(tab.id);
           } catch (e) {}
         }
-      }, 2000);
-    }, 2000);
+      }, CONFIG.checkInterval);
+    }, CONFIG.checkInterval);
   } catch (error) {
-    updateDebugStatus("Login failed: " + error.message);
+    updateStatus("Login failed: " + error.message);
   }
 };
 
-// Check if token is expired or will expire soon (within 5 minutes)
+// Check if token is expired or will expire soon
 const isTokenExpired = () => {
-  if (!tokenExpiresAt) {
-    return true;
-  }
-  const expiresAt = new Date(parseInt(tokenExpiresAt) * 1000);
-  const now = new Date();
-  const fiveMinutesFromNow = new Date(now.getTime() + 5 * 60 * 1000);
-  const isExpired = expiresAt <= fiveMinutesFromNow;
-
-  return isExpired;
+  if (!state.tokenExpiresAt) return true;
+  const expiresAt = new Date(parseInt(state.tokenExpiresAt) * 1000);
+  const fiveMinutesFromNow = new Date(Date.now() + CONFIG.tokenBuffer);
+  return expiresAt <= fiveMinutesFromNow;
 };
 
 // Refresh the access token using the refresh token
 const refreshAccessToken = async () => {
   try {
-    if (!refreshToken) {
-      throw new Error("No refresh token available");
-    }
+    if (!state.refreshToken) throw new Error("No refresh token available");
 
-    const backendUrl = "http://localhost:8787";
-    const refreshUrl = `${backendUrl}/auth/refresh`;
-
-    const response = await fetch(refreshUrl, {
+    const response = await fetch(`${CONFIG.backendUrl}/auth/refresh`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        refresh_token: refreshToken,
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: state.refreshToken }),
     });
 
     if (!response.ok) {
@@ -242,19 +239,13 @@ const refreshAccessToken = async () => {
     }
 
     const data = await response.json();
-
-    // Update tokens
-    jwtToken = data.access_token;
-    refreshToken = data.refresh_token;
-    tokenExpiresAt = data.expires_at?.toString();
-
-    // Store updated tokens
-    await browser.storage.local.set({
-      jwtToken: jwtToken,
-      refreshToken: refreshToken,
-      tokenExpiresAt: tokenExpiresAt,
+    Object.assign(state, {
+      jwtToken: data.access_token,
+      refreshToken: data.refresh_token,
+      tokenExpiresAt: data.expires_at?.toString(),
     });
 
+    await browser.storage.local.set(state);
     return true;
   } catch (error) {
     return false;
@@ -263,44 +254,34 @@ const refreshAccessToken = async () => {
 
 // Ensure we have a valid token before making API calls
 const ensureValidToken = async () => {
-  if (!jwtToken || isTokenExpired()) {
-    updateDebugStatus("Token expired, refreshing...");
+  if (!state.jwtToken || isTokenExpired()) {
+    updateStatus("Token expired, refreshing...");
 
-    // Ask background script to refresh token
     try {
       const response = await browser.runtime.sendMessage({
         action: "refreshToken",
       });
-
-      if (response && response.success) {
-        // Reload tokens from storage
+      if (response?.success) {
         const result = await browser.storage.local.get([
           "jwtToken",
           "refreshToken",
           "tokenExpiresAt",
         ]);
-        jwtToken = result.jwtToken;
-        refreshToken = result.refreshToken;
-        tokenExpiresAt = result.tokenExpiresAt;
-
-        if (jwtToken) {
-          updateDebugStatus("Token refreshed successfully");
+        Object.assign(state, result);
+        if (state.jwtToken) {
+          updateStatus("Token refreshed successfully");
           return true;
-        } else {
         }
-      } else {
       }
     } catch (error) {}
 
-    // Fallback to direct refresh
     const refreshed = await refreshAccessToken();
     if (!refreshed) {
-      updateDebugStatus("Token refresh failed, please login again");
+      updateStatus("Token refresh failed, please login again");
       await handleLogout();
       return false;
     }
-    updateDebugStatus("Token refreshed successfully");
-  } else {
+    updateStatus("Token refreshed successfully");
   }
   return true;
 };
@@ -313,52 +294,42 @@ const handleLogout = async () => {
       "refreshToken",
       "tokenExpiresAt",
     ]);
-    jwtToken = null;
-    refreshToken = null;
-    tokenExpiresAt = null;
-    showAuthSection();
+    Object.assign(state, {
+      jwtToken: null,
+      refreshToken: null,
+      tokenExpiresAt: null,
+    });
+    showSection("auth");
   } catch (error) {}
 };
 
 // Send recipe to endpoint
 const sendToEndpoint = async (data) => {
   try {
-    // Ensure we have a valid token before making the request
     const hasValidToken = await ensureValidToken();
-    if (!hasValidToken) {
+    if (!hasValidToken)
       throw new Error("Authentication failed - please login again");
-    }
 
-    const backendUrl = "http://localhost:8787";
-    const apiUrl = `${backendUrl}/extract-from-html`;
-
-    // Transform data to match API expectations
-    const requestData = {
-      html: data.html,
-      url: data.url,
-      metadata: {
-        userAgent: data.userAgent,
-        timestamp: data.timestamp,
-        extensionVersion: "1.0",
-      },
-    };
-
-    const response = await fetch(apiUrl, {
+    const response = await fetch(`${CONFIG.backendUrl}/extract-from-html`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${jwtToken}`,
+        Authorization: `Bearer ${state.jwtToken}`,
       },
-      body: JSON.stringify(requestData),
+      body: JSON.stringify({
+        html: data.html,
+        url: data.url,
+        metadata: {
+          userAgent: data.userAgent,
+          timestamp: data.timestamp,
+          extensionVersion: "1.0",
+        },
+      }),
     });
 
-    // Log the response body for debugging
     const responseText = await response.text();
 
     if (response.status === 401 || response.status === 403) {
-      // Token expired or invalid
-      // TEMPORARY: Don't auto-logout until we debug the API issue
-      // await handleLogout();
       throw new Error("API authentication failed. Check console for details.");
     }
 
@@ -366,7 +337,6 @@ const sendToEndpoint = async (data) => {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
-    // Parse the response data
     let responseData = null;
     try {
       responseData = JSON.parse(responseText);
@@ -386,13 +356,9 @@ const handleAddRecipe = async () => {
       currentWindow: true,
     });
 
-    addRecipeBtn.textContent = "Capturing...";
-    addRecipeBtn.disabled = true;
-
-    // Hide the View Recipe button when starting a new capture
-    if (viewRecipeBtn) {
-      viewRecipeBtn.style.display = "none";
-    }
+    await handleButtonState(elements.addRecipeBtn, {
+      loading: { text: "Capturing...", color: CONFIG.buttonColors.default },
+    });
 
     const response = await new Promise((resolve, reject) => {
       browser.tabs.sendMessage(
@@ -408,73 +374,49 @@ const handleAddRecipe = async () => {
       );
     });
 
-    if (response && response.success) {
-      addRecipeBtn.textContent = "Sending...";
-
+    if (response?.success) {
+      updateButton(
+        elements.addRecipeBtn,
+        "Sending...",
+        CONFIG.buttonColors.default,
+        true
+      );
       const sendResult = await sendToEndpoint(response.data);
 
       if (sendResult.success) {
-        // Store the recipe ID for the View Recipe button
-        lastCreatedRecipeId = sendResult.data?.id;
-
-        addRecipeBtn.textContent = "✅ Sent!";
-        addRecipeBtn.style.backgroundColor = "#45a049";
-
-        // Show the View Recipe button
-        if (lastCreatedRecipeId && viewRecipeBtn) {
-          viewRecipeBtn.style.display = "block";
-        }
-
-        setTimeout(() => {
-          addRecipeBtn.textContent = "Add this recipe to Resept";
-          addRecipeBtn.style.backgroundColor = "#4caf50";
-          addRecipeBtn.disabled = false;
-
-          // Hide the View Recipe button after 10 seconds
-          if (viewRecipeBtn) {
-            viewRecipeBtn.style.display = "none";
-          }
-        }, 2000);
+        state.lastCreatedRecipeId = sendResult.data?.id;
+        await handleButtonState(elements.addRecipeBtn, {
+          success: {
+            text: "✅ Sent!",
+            color: CONFIG.buttonColors.success,
+            showViewButton: !!state.lastCreatedRecipeId,
+          },
+        });
       } else {
-        addRecipeBtn.textContent = "❌ Failed";
-        addRecipeBtn.style.backgroundColor = "#f44336";
-        setTimeout(() => {
-          addRecipeBtn.textContent = "Add this recipe to Resept";
-          addRecipeBtn.style.backgroundColor = "#4caf50";
-          addRecipeBtn.disabled = false;
-        }, 2000);
+        await handleButtonState(elements.addRecipeBtn, {
+          error: { text: "❌ Failed", color: CONFIG.buttonColors.error },
+        });
       }
     } else {
-      addRecipeBtn.textContent = "❌ Failed";
-      addRecipeBtn.style.backgroundColor = "#f44336";
-      setTimeout(() => {
-        addRecipeBtn.textContent = "Add this recipe to Resept";
-        addRecipeBtn.style.backgroundColor = "#4caf50";
-        addRecipeBtn.disabled = false;
-      }, 2000);
+      await handleButtonState(elements.addRecipeBtn, {
+        error: { text: "❌ Failed", color: CONFIG.buttonColors.error },
+      });
     }
   } catch (error) {
-    addRecipeBtn.textContent = "❌ Error";
-    addRecipeBtn.style.backgroundColor = "#f44336";
-    setTimeout(() => {
-      addRecipeBtn.textContent = "Add this recipe to Resept";
-      addRecipeBtn.style.backgroundColor = "#4caf50";
-      addRecipeBtn.disabled = false;
-    }, 2000);
+    await handleButtonState(elements.addRecipeBtn, {
+      error: { text: "❌ Error", color: CONFIG.buttonColors.error },
+    });
   }
 };
 
 // Handle viewing recipe
 const handleViewRecipe = async () => {
-  if (!lastCreatedRecipeId) {
-    updateDebugStatus("No recipe to view");
+  if (!state.lastCreatedRecipeId) {
+    updateStatus("No recipe to view");
     return;
   }
 
   try {
-    // Construct the webapp URL
-    // Switch between dev and production based on environment
-    // Check if we're in development by looking for localhost in the current tab
     const [currentTab] = await browser.tabs.query({
       active: true,
       currentWindow: true,
@@ -483,29 +425,20 @@ const handleViewRecipe = async () => {
       currentTab?.url?.includes("localhost") ||
       currentTab?.url?.includes("127.0.0.1");
     const webappUrl = isDev
-      ? `http://localhost:5173/recipes/${lastCreatedRecipeId}`
-      : `https://flopieutd.github.io/resept/recipes/${lastCreatedRecipeId}`;
+      ? `http://localhost:5173/recipes/${state.lastCreatedRecipeId}`
+      : `https://flopieutd.github.io/resept/recipes/${state.lastCreatedRecipeId}`;
 
-    // Open the recipe in a new tab
-    await browser.tabs.create({
-      url: webappUrl,
-      active: true,
-    });
-
-    updateDebugStatus("Recipe opened in webapp!");
-
-    // Hide the View Recipe button after opening
-    if (viewRecipeBtn) {
-      viewRecipeBtn.style.display = "none";
-    }
+    await browser.tabs.create({ url: webappUrl, active: true });
+    updateStatus("Recipe opened in webapp!");
+    showViewButton(false);
   } catch (error) {
-    updateDebugStatus("Error opening recipe: " + error.message);
+    updateStatus("Error opening recipe: " + error.message);
   }
 };
 
 // Initialize when popup opens
 document.addEventListener("DOMContentLoaded", () => {
   init().catch((error) => {
-    updateDebugStatus("Failed to initialize: " + error.message);
+    updateStatus("Failed to initialize: " + error.message);
   });
 });
