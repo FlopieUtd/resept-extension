@@ -1,11 +1,8 @@
 // Configuration
 const CONFIG = {
   backendUrl: "http://localhost:8787",
-  authTimeout: 30,
-  checkInterval: 2000,
   tokenBuffer: 5 * 60 * 1000, // 5 minutes
   buttonResetDelay: 2000,
-  viewButtonHideDelay: 10000,
   buttonColors: {
     success: "#45a049",
     error: "#f44336",
@@ -18,8 +15,7 @@ const elements = {
   authSection: document.getElementById("authSection"),
   recipeSection: document.getElementById("recipeSection"),
   loginBtn: document.getElementById("loginBtn"),
-  addRecipeBtn: document.getElementById("addRecipeBtn"),
-  viewRecipeBtn: document.getElementById("viewRecipeBtn"),
+  openRecipeBtn: document.getElementById("openRecipeBtn"),
   logoutBtn: document.getElementById("logoutBtn"),
   status: document.getElementById("status"),
 };
@@ -51,14 +47,8 @@ const updateButton = (button, text, color, disabled = false) => {
   }
 };
 
-const resetButton = (button, text = "Add this recipe to Resept") => {
+const resetButton = (button, text = "Open recipe in Resept") => {
   updateButton(button, text, CONFIG.buttonColors.default, false);
-};
-
-const showViewButton = (show = true) => {
-  if (elements.viewRecipeBtn) {
-    elements.viewRecipeBtn.style.display = show ? "block" : "none";
-  }
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -68,15 +58,12 @@ const handleButtonState = async (button, states) => {
 
   if (loading) {
     updateButton(button, loading.text, loading.color, true);
-    showViewButton(false);
   }
 
   if (success) {
     updateButton(button, success.text, success.color);
-    if (success.showViewButton) showViewButton(true);
     setTimeout(() => {
       resetButton(button);
-      showViewButton(false);
     }, CONFIG.buttonResetDelay);
   }
 
@@ -91,6 +78,45 @@ const init = async () => {
   try {
     updateStatus("Initializing...");
     await sleep(100);
+
+    // Setup global message listener for auth success
+    browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      console.log("🔍 Global message listener received:", {
+        message,
+        senderTabId: sender.tab?.id,
+        senderUrl: sender.url,
+      });
+
+      if (message.type === "EXTENSION_AUTH_SUCCESS") {
+        console.log(
+          "✅ Global listener received auth success, storing tokens..."
+        );
+        // Store the tokens
+        browser.storage.local
+          .set({
+            jwtToken: message.tokens.jwtToken,
+            refreshToken: message.tokens.refreshToken,
+            tokenExpiresAt: message.tokens.tokenExpiresAt,
+          })
+          .then(() => {
+            console.log("✅ Tokens stored successfully");
+            updateStatus("Authentication successful!");
+            checkAuthState();
+            // Close any open auth tabs (disabled for debugging)
+            // browser.tabs.query({}).then((tabs) => {
+            //   tabs.forEach((tab) => {
+            //     if (
+            //       tab.url &&
+            //       (tab.url.includes("/auth/extension") ||
+            //         tab.url.includes("auth-success.html"))
+            //     ) {
+            //       browser.tabs.remove(tab.id);
+            //     }
+            //   });
+            // });
+          });
+      }
+    });
 
     try {
       await browser.runtime.sendMessage({ action: "checkTokenStatus" });
@@ -115,9 +141,16 @@ const checkAuthState = async () => {
       "tokenExpiresAt",
     ]);
 
+    console.log("🔍 Auth state check:", {
+      hasJwtToken: !!result.jwtToken,
+      hasRefreshToken: !!result.refreshToken,
+      tokenExpiresAt: result.tokenExpiresAt,
+    });
+
     Object.assign(state, result);
 
     if (state.jwtToken) {
+      console.log("✅ JWT token found, checking expiry...");
       if (isTokenExpired()) {
         updateStatus("Token expired, refreshing...");
         const refreshed = await refreshAccessToken();
@@ -127,13 +160,16 @@ const checkAuthState = async () => {
           return;
         }
       }
+      console.log("✅ Token valid, showing recipe section");
       updateStatus("✅ Authenticated! Showing recipe section");
       showSection("recipe");
     } else {
+      console.log("❌ No JWT token, showing auth section");
       updateStatus("❌ Not authenticated - showing login");
       showSection("auth");
     }
   } catch (error) {
+    console.log("❌ Auth state check error:", error);
     updateStatus("Error: " + error.message);
     showSection("auth");
   }
@@ -143,8 +179,7 @@ const checkAuthState = async () => {
 const setupEventListeners = () => {
   const listeners = [
     [elements.loginBtn, handleLogin],
-    [elements.addRecipeBtn, handleAddRecipe],
-    [elements.viewRecipeBtn, handleViewRecipe],
+    [elements.openRecipeBtn, handleOpenRecipe],
     [elements.logoutBtn, handleLogout],
   ];
 
@@ -164,49 +199,7 @@ const handleLogin = async () => {
     }/auth/extension?redirect_uri=${encodeURIComponent(redirectUri)}`;
 
     const tab = await browser.tabs.create({ url: authUrl, active: true });
-
-    updateStatus("Monitoring auth tab...");
-    setTimeout(() => {
-      let attempts = 0;
-      const checkInterval = setInterval(async () => {
-        attempts++;
-
-        try {
-          const tabResult = await browser.tabs.executeScript(tab.id, {
-            code: `({
-              jwtToken: localStorage.getItem('jwtToken') || localStorage.getItem('extension_token'),
-              refreshToken: localStorage.getItem('extension_refresh_token'),
-              expiresAt: localStorage.getItem('extension_expires_at')
-            })`,
-          });
-
-          if (tabResult?.[0]?.jwtToken) {
-            const tokenData = tabResult[0];
-            await browser.storage.local.set({
-              jwtToken: tokenData.jwtToken,
-              refreshToken: tokenData.refreshToken,
-              tokenExpiresAt: tokenData.expiresAt,
-            });
-
-            updateStatus("Authentication successful!");
-            await checkAuthState();
-            clearInterval(checkInterval);
-            try {
-              await browser.tabs.remove(tab.id);
-            } catch (e) {}
-            return;
-          }
-        } catch (e) {}
-
-        if (attempts >= CONFIG.authTimeout) {
-          clearInterval(checkInterval);
-          updateStatus("OAuth timeout - please try again");
-          try {
-            await browser.tabs.remove(tab.id);
-          } catch (e) {}
-        }
-      }, CONFIG.checkInterval);
-    }, CONFIG.checkInterval);
+    console.log("🔧 Opened auth tab:", tab.id);
   } catch (error) {
     updateStatus("Login failed: " + error.message);
   }
@@ -348,16 +341,16 @@ const sendToEndpoint = async (data) => {
   }
 };
 
-// Handle adding recipe
-const handleAddRecipe = async () => {
+// Handle opening recipe (save + open)
+const handleOpenRecipe = async () => {
   try {
     const [tab] = await browser.tabs.query({
       active: true,
       currentWindow: true,
     });
 
-    await handleButtonState(elements.addRecipeBtn, {
-      loading: { text: "Capturing...", color: CONFIG.buttonColors.default },
+    await handleButtonState(elements.openRecipeBtn, {
+      loading: { text: "⏳ Capturing...", color: CONFIG.buttonColors.default },
     });
 
     const response = await new Promise((resolve, reject) => {
@@ -376,8 +369,8 @@ const handleAddRecipe = async () => {
 
     if (response?.success) {
       updateButton(
-        elements.addRecipeBtn,
-        "Sending...",
+        elements.openRecipeBtn,
+        "⏳ Saving...",
         CONFIG.buttonColors.default,
         true
       );
@@ -385,55 +378,57 @@ const handleAddRecipe = async () => {
 
       if (sendResult.success) {
         state.lastCreatedRecipeId = sendResult.data?.id;
-        await handleButtonState(elements.addRecipeBtn, {
+        updateButton(
+          elements.openRecipeBtn,
+          "⏳ Opening...",
+          CONFIG.buttonColors.default,
+          true
+        );
+
+        await openRecipeInWebapp();
+
+        await handleButtonState(elements.openRecipeBtn, {
           success: {
-            text: "✅ Sent!",
+            text: "✅ Opened!",
             color: CONFIG.buttonColors.success,
-            showViewButton: !!state.lastCreatedRecipeId,
           },
         });
       } else {
-        await handleButtonState(elements.addRecipeBtn, {
+        await handleButtonState(elements.openRecipeBtn, {
           error: { text: "❌ Failed", color: CONFIG.buttonColors.error },
         });
       }
     } else {
-      await handleButtonState(elements.addRecipeBtn, {
+      await handleButtonState(elements.openRecipeBtn, {
         error: { text: "❌ Failed", color: CONFIG.buttonColors.error },
       });
     }
   } catch (error) {
-    await handleButtonState(elements.addRecipeBtn, {
+    await handleButtonState(elements.openRecipeBtn, {
       error: { text: "❌ Error", color: CONFIG.buttonColors.error },
     });
   }
 };
 
-// Handle viewing recipe
-const handleViewRecipe = async () => {
+// Open recipe in webapp
+const openRecipeInWebapp = async () => {
   if (!state.lastCreatedRecipeId) {
-    updateStatus("No recipe to view");
-    return;
+    throw new Error("No recipe to open");
   }
 
-  try {
-    const [currentTab] = await browser.tabs.query({
-      active: true,
-      currentWindow: true,
-    });
-    const isDev =
-      currentTab?.url?.includes("localhost") ||
-      currentTab?.url?.includes("127.0.0.1");
-    const webappUrl = isDev
-      ? `http://localhost:5173/recipes/${state.lastCreatedRecipeId}`
-      : `https://flopieutd.github.io/resept/recipes/${state.lastCreatedRecipeId}`;
+  const [currentTab] = await browser.tabs.query({
+    active: true,
+    currentWindow: true,
+  });
+  const isDev =
+    currentTab?.url?.includes("localhost") ||
+    currentTab?.url?.includes("127.0.0.1");
+  const webappUrl = isDev
+    ? `http://localhost:5173/recipes/${state.lastCreatedRecipeId}`
+    : `https://flopieutd.github.io/resept/recipes/${state.lastCreatedRecipeId}`;
 
-    await browser.tabs.create({ url: webappUrl, active: true });
-    updateStatus("Recipe opened in webapp!");
-    showViewButton(false);
-  } catch (error) {
-    updateStatus("Error opening recipe: " + error.message);
-  }
+  await browser.tabs.create({ url: webappUrl, active: true });
+  updateStatus("Recipe opened in webapp!");
 };
 
 // Initialize when popup opens
