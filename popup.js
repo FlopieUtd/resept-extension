@@ -81,16 +81,7 @@ const init = async () => {
 
     // Setup global message listener for auth success
     browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      console.log("🔍 Global message listener received:", {
-        message,
-        senderTabId: sender.tab?.id,
-        senderUrl: sender.url,
-      });
-
       if (message.type === "EXTENSION_AUTH_SUCCESS") {
-        console.log(
-          "✅ Global listener received auth success, storing tokens..."
-        );
         // Store the tokens
         browser.storage.local
           .set({
@@ -99,7 +90,6 @@ const init = async () => {
             tokenExpiresAt: message.tokens.tokenExpiresAt,
           })
           .then(() => {
-            console.log("✅ Tokens stored successfully");
             updateStatus("Authentication successful!");
             checkAuthState();
             // Close any open auth tabs (disabled for debugging)
@@ -141,16 +131,9 @@ const checkAuthState = async () => {
       "tokenExpiresAt",
     ]);
 
-    console.log("🔍 Auth state check:", {
-      hasJwtToken: !!result.jwtToken,
-      hasRefreshToken: !!result.refreshToken,
-      tokenExpiresAt: result.tokenExpiresAt,
-    });
-
     Object.assign(state, result);
 
     if (state.jwtToken) {
-      console.log("✅ JWT token found, checking expiry...");
       if (isTokenExpired()) {
         updateStatus("Token expired, refreshing...");
         const refreshed = await refreshAccessToken();
@@ -160,16 +143,13 @@ const checkAuthState = async () => {
           return;
         }
       }
-      console.log("✅ Token valid, showing recipe section");
       updateStatus("✅ Authenticated! Showing recipe section");
       showSection("recipe");
     } else {
-      console.log("❌ No JWT token, showing auth section");
       updateStatus("❌ Not authenticated - showing login");
       showSection("auth");
     }
   } catch (error) {
-    console.log("❌ Auth state check error:", error);
     updateStatus("Error: " + error.message);
     showSection("auth");
   }
@@ -199,7 +179,6 @@ const handleLogin = async () => {
     }/auth/extension?redirect_uri=${encodeURIComponent(redirectUri)}`;
 
     const tab = await browser.tabs.create({ url: authUrl, active: true });
-    console.log("🔧 Opened auth tab:", tab.id);
   } catch (error) {
     updateStatus("Login failed: " + error.message);
   }

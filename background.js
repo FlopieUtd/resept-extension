@@ -100,7 +100,7 @@ const setupPeriodicRefresh = () => {
 browser.runtime.onStartup.addListener(init);
 browser.runtime.onInstalled.addListener(init);
 
-// Handle messages from popup
+// Handle messages from popup and content script
 browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "refreshToken") {
     checkAndRefreshToken().then(() => {
